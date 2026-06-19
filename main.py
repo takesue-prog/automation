@@ -2,7 +2,6 @@ import os
 import time
 from datetime import datetime, timedelta
 
-import anthropic
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
@@ -10,7 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
-claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+_anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+if _anthropic_api_key:
+    import anthropic
+    claude = anthropic.Anthropic(api_key=_anthropic_api_key)
+else:
+    claude = None
 
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
@@ -22,6 +27,8 @@ UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "30"))
 
 
 def ask_claude(user_message: str) -> str:
+    if not claude:
+        return "AI返答機能は設定されていません（ANTHROPIC_API_KEY未設定）。"
     message = claude.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
