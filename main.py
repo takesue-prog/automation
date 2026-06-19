@@ -126,16 +126,15 @@ def handle_mention(event, say, client):
 
     if is_listing:
         channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
-        if not channel_id:
-            say(
-                f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。",
-                thread_ts=event.get("ts"),
-            )
+        # 契約報告チャンネルからのメンションのみ未処理一覧を返す
+        if channel_id and event.get("channel") == channel_id:
+            reports = get_unprocessed_reports(client, channel_id)
+            reply = format_unprocessed_list(channel_id, reports)
+            say(reply, thread_ts=event.get("ts"))
             return
 
-        reports = get_unprocessed_reports(client, channel_id)
-        reply = format_unprocessed_list(channel_id, reports)
-        say(reply, thread_ts=event.get("ts"))
+    if not user_text:
+        say("何かご質問はありますか？", thread_ts=event.get("ts"))
         return
 
     reply = ask_claude(user_text)
