@@ -42,6 +42,55 @@ def handle_mention(event, say):
     say(reply, thread_ts=event.get("ts"))
 
 
+@app.event("reaction_added")
+def handle_reaction(event, client):
+    reaction = event.get("reaction")
+    if reaction not in ("memo", "globe_with_meridians"):
+        return
+
+    # リアクションされたメッセージを取得
+    item = event.get("item", {})
+    channel = item.get("channel")
+    message_ts = item.get("ts")
+
+    # チャンネル情報を確認してDMかどうかチェック
+    try:
+        info = client.conversations_info(channel=channel)
+        if not info["channel"].get("is_im"):
+            return
+    except Exception:
+        return
+
+    # メッセージ本文を取得
+    try:
+        result = client.conversations_history(
+            channel=channel, latest=message_ts, limit=1, inclusive=True
+        )
+        messages = result.get("messages", [])
+        if not messages:
+            return
+        text = messages[0].get("text", "").strip()
+    except Exception:
+        return
+
+    if not text:
+        return
+
+    if reaction == "memo":
+        prompt = f"以下のメッセージを簡潔に要約してください:\n\n{text}"
+        prefix = "📝 要約:"
+    else:
+        prompt = f"以下のメッセージを日本語に翻訳してください。すでに日本語の場合は英語に翻訳してください:\n\n{text}"
+        prefix = "🌐 翻訳:"
+
+    reply = ask_claude(prompt)
+    client.chat_postMessage(
+        channel=channel,
+        text=f"{prefix}\n{reply}",
+        thread_ts=message_ts,
+    )
+
+
 @app.event("message")
 def handle_dm(event, say, client):
     # DMのみ返信 (チャンネルメッセージはメンションで対応)

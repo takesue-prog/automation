@@ -14,10 +14,13 @@ Claude AI を使って Slack のメンションやDMに自動返信するBotで�
    - `im:history`
    - `im:read`
    - `im:write`
+   - `channels:read`
+   - `reactions:read`
 4. **Socket Mode** を有効化 → App-Level Token を生成 (`connections:write` スコープ)
 5. **Event Subscriptions** を有効化 → Subscribe to bot events に以下を追加:
    - `app_mention`
    - `message.im`
+   - `reaction_added`
 6. アプリをワークスペースにインストール
 
 ### 2. 環境変数の設定
