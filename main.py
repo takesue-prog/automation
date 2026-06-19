@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -38,7 +39,7 @@ def ask_claude(user_message: str) -> str:
     return message.content[0].text
 
 
-def get_channel_id(client, channel_name: str) -> str | None:
+def get_channel_id(client, channel_name: str) -> Optional[str]:
     channel_name = channel_name.lstrip("#")
     cursor = None
     while True:
@@ -73,7 +74,7 @@ def extract_store_name(text: str) -> str:
     return ""
 
 
-def get_unprocessed_reports(client, channel_id: str) -> list[dict]:
+def get_unprocessed_reports(client, channel_id: str) -> list:
     """過去N日間のうち処理済みリアクションのないメッセージを返す"""
     oldest = (datetime.now() - timedelta(days=UNPROCESSED_SEARCH_DAYS)).timestamp()
     unprocessed = []
