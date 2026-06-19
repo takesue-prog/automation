@@ -194,10 +194,10 @@ def format_aggregation(messages: list) -> str:
             plan = extract_field_value(text, "プラン")
             plan_counts[plan or "不明"] += 1
         elif report_type == "オプション追加":
-            opt = extract_field_value(text, "オプション")
+            opt = extract_field_value(text, "対象オプション")
             option_add_counts[opt or "不明"] += 1
         elif report_type == "オプション解約":
-            opt = extract_field_value(text, "オプション")
+            opt = extract_field_value(text, "対象オプション")
             option_cancel_counts[opt or "不明"] += 1
 
     total = sum(type_counts.values())
