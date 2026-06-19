@@ -58,11 +58,11 @@ def get_channel_id(client, channel_name: str) -> Optional[str]:
 
 
 def extract_store_name(text: str) -> str:
-    """＜対象店舗＞ブロックから店舗名を抽出する"""
+    """＜対象店舗＞または＜店舗名＞ブロックから店舗名を抽出する"""
     lines = text.splitlines()
     in_store_block = False
     for line in lines:
-        if "＜対象店舗＞" in line:
+        if "＜対象店舗＞" in line or "＜店舗名＞" in line:
             in_store_block = True
             continue
         if in_store_block:
@@ -88,6 +88,9 @@ def get_unprocessed_reports(client, channel_id: str) -> list:
         response = client.conversations_history(**kwargs)
         for msg in response.get("messages", []):
             if msg.get("bot_id") or msg.get("subtype"):
+                continue
+            # ボットへのメンションコマンド自体は除外
+            if msg.get("text", "").startswith("<@"):
                 continue
             reactions = [r["name"] for r in msg.get("reactions", [])]
             if PROCESSED_REACTION not in reactions:
