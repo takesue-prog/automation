@@ -1,0 +1,10 @@
+# 秘密情報
+.env
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
