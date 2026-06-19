@@ -87,8 +87,6 @@ def get_unprocessed_reports(client, channel_id: str) -> list:
 
         response = client.conversations_history(**kwargs)
         for msg in response.get("messages", []):
-            if msg.get("bot_id") or msg.get("subtype"):
-                continue
             # ボットへのメンションコマンド自体は除外
             if msg.get("text", "").startswith("<@"):
                 continue
