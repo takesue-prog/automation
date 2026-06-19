@@ -23,7 +23,10 @@ SYSTEM_PROMPT = os.getenv(
     "あなたはSlackの自動返信アシスタントです。ユーザーの質問に簡潔かつ丁寧に日本語で回答してください。",
 )
 CONTRACT_CHANNEL_NAME = os.getenv("CONTRACT_CHANNEL_NAME", "repitte-beauty-contract")
-PROCESSED_REACTION = os.getenv("PROCESSED_REACTION", "武居_済み")
+PROCESSED_REACTIONS = [
+    r.strip()
+    for r in os.getenv("PROCESSED_REACTIONS", "武居_済み,無視").split(",")
+]
 UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "30"))
 
 
@@ -91,7 +94,7 @@ def get_unprocessed_reports(client, channel_id: str) -> list:
             if msg.get("text", "").startswith("<@"):
                 continue
             reactions = [r["name"] for r in msg.get("reactions", [])]
-            if PROCESSED_REACTION not in reactions:
+            if not any(r in reactions for r in PROCESSED_REACTIONS):
                 unprocessed.append(msg)
 
         meta = response.get("response_metadata", {})
