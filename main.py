@@ -29,7 +29,7 @@ PROCESSED_REACTIONS = [
     for r in os.getenv("PROCESSED_REACTIONS", "武居_済み,無視").split(",")
 ]
 IGNORE_REACTION = os.getenv("IGNORE_REACTION", "無視")
-UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "30"))
+UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "60"))
 
 # 集計対象の報告種別（メッセージ内のキーワードで判定）
 REPORT_TYPES = [
