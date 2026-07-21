@@ -103,13 +103,23 @@ def _find_in_range(index: Dict, label: str, start_row: int, end_row: int) -> Opt
 
 
 def _data_col(index: Dict) -> int:
-    """Find the column for the current month's data (header rows only)."""
+    """Find the column for the current month's actual results (実績) data.
+
+    When the same month label appears in both 予算 and 実績 sections,
+    use the rightmost (highest column number) occurrence, which is 実績.
+    If GOOGLE_DATA_COLUMN is set explicitly, use that instead.
+    """
+    if DATA_COLUMN != 2:  # user explicitly overrode the default
+        logger.info(f"Using fixed data column from env: {DATA_COLUMN}")
+        return DATA_COLUMN
     now = datetime.now()
     target = f"{now.year}年{now.month}月"
-    for (r, c) in index.get(target, []):
-        if r <= 5:
-            logger.info(f"Month column '{target}' found at col {c} (row {r})")
-            return c
+    matches = [(r, c) for (r, c) in index.get(target, []) if r <= 5]
+    if matches:
+        # Pick the rightmost occurrence (実績 section is to the right of 予算)
+        best = max(matches, key=lambda x: x[1])
+        logger.info(f"Month column '{target}' found at col {best[1]} (row {best[0]}, {len(matches)} matches)")
+        return best[1]
     logger.warning(f"Month column '{target}' not found in header rows; using DATA_COLUMN={DATA_COLUMN}")
     return DATA_COLUMN
 
