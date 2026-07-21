@@ -293,9 +293,10 @@ def setup_reminder_scheduler():
         except Exception as e:
             logger.error(f"Failed to post reminder: {e}")
 
-    scheduler.add_job(send_pending_reminder, "interval", days=REMINDER_INTERVAL_DAYS)
+    scheduler.add_job(send_pending_reminder, "cron", day_of_week="tue", hour=11, minute=0)
+    scheduler.add_job(send_pending_reminder, "cron", day_of_week="fri", hour=11, minute=0)
     scheduler.start()
-    logger.info(f"Reminder scheduler started: every {REMINDER_INTERVAL_DAYS} days → {REMINDER_USER_ID}")
+    logger.info(f"Reminder scheduler started: tue/fri 11:00 → #{CONTRACT_CHANNEL_NAME}")
     return scheduler
 
 
