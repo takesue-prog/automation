@@ -50,8 +50,8 @@ OPTION_NAME_MAP: Dict[str, str] = {
 OPTION_INDIVIDUAL_PRICE: Dict[str, int] = {
     "チャット": 1000,
     "WEB予約": 2000,
-    "システム連携": 2000,
-    "セグメント配信": 1000,
+    "システム連携": 1000,
+    "セグメント配信": 2000,
     "カルテ機能": 1000,
 }
 
