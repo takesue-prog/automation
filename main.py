@@ -1,5 +1,5 @@
+import logging
 import os
-import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -9,6 +9,9 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
@@ -294,6 +297,50 @@ def handle_dm(event, say, client):
 
     reply = ask_claude(text)
     say(reply)
+
+
+@app.event("reaction_added")
+def handle_reaction_added(event, client):
+    if event.get("reaction") != "武居_済み":
+        return
+
+    item = event.get("item", {})
+    if item.get("type") != "message":
+        return
+
+    react_channel = item.get("channel")
+    ts = item.get("ts")
+
+    contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+    if not contract_channel_id or react_channel != contract_channel_id:
+        return
+
+    try:
+        resp = client.conversations_history(
+            channel=react_channel,
+            latest=ts,
+            oldest=ts,
+            inclusive=True,
+            limit=1,
+        )
+        messages = resp.get("messages", [])
+        if not messages:
+            return
+        text = messages[0].get("text", "")
+    except Exception as e:
+        logger.error(f"Failed to fetch message ts={ts}: {e}")
+        return
+
+    if not text:
+        return
+
+    try:
+        from sheets import update_spreadsheet
+        msg_type, labels = update_spreadsheet(text)
+        if msg_type:
+            logger.info(f"Sheets updated [{msg_type}]: {labels}")
+    except Exception as e:
+        logger.error(f"Sheets update failed: {e}")
 
 
 if __name__ == "__main__":
