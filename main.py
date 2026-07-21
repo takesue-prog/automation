@@ -1,9 +1,10 @@
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -264,13 +265,29 @@ def format_aggregation(messages: list) -> str:
     return "\n".join(lines)
 
 
-def process_past_messages(client, channel_id: str) -> str:
+def parse_year_month(text: str) -> Tuple[Optional[int], Optional[int]]:
+    """テキストから年月を抽出する（例: 2026年7月 → (2026, 7)）"""
+    m = re.search(r'(\d{4})年(\d{1,2})月', text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r'(\d{4})[/\-](\d{1,2})', text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r'(\d{1,2})月', text)
+    if m:
+        return datetime.now().year, int(m.group(1))
+    return None, None
+
+
+def process_past_messages(client, channel_id: str, year: Optional[int] = None, month: Optional[int] = None) -> str:
     """未処理の過去メッセージを一括でスプシ更新 + BOT済みスタンプ付与する"""
     from sheets import classify_report as sheets_classify, update_spreadsheet
 
     messages = fetch_channel_messages(client, channel_id)
     processed = 0
     errors = 0
+
+    period_label = f"{year}年{month}月" if year and month else "全期間"
 
     for msg in messages:
         reactions = [r["name"] for r in msg.get("reactions", [])]
@@ -284,6 +301,12 @@ def process_past_messages(client, channel_id: str) -> str:
 
         if not text or text.startswith("<@"):
             continue
+
+        # 年月フィルタ
+        if year and month:
+            msg_dt = datetime.fromtimestamp(float(ts))
+            if msg_dt.year != year or msg_dt.month != month:
+                continue
 
         report_type = sheets_classify(text)
         if report_type not in AUTO_PROCESS_TYPES:
@@ -301,8 +324,8 @@ def process_past_messages(client, channel_id: str) -> str:
             errors += 1
 
     if errors:
-        return f"一括処理完了：*{processed}件* 処理しました（エラー {errors}件）"
-    return f"✅ 一括処理完了：*{processed}件* 処理しました"
+        return f"一括処理完了（{period_label}）：*{processed}件* 処理しました（エラー {errors}件）"
+    return f"✅ 一括処理完了（{period_label}）：*{processed}件* 処理しました"
 
 
 def setup_reminder_scheduler():
@@ -361,8 +384,10 @@ def handle_mention(event, say, client):
     is_contract_channel = channel_id and event.get("channel") == channel_id
 
     if is_past and is_contract_channel:
-        say("過去分を処理中です。しばらくお待ちください...", thread_ts=event.get("ts"))
-        result = process_past_messages(client, channel_id)
+        year, month = parse_year_month(user_text)
+        period = f"{year}年{month}月" if year and month else "全期間"
+        say(f"{period} の過去分を処理中です。しばらくお待ちください...", thread_ts=event.get("ts"))
+        result = process_past_messages(client, channel_id, year=year, month=month)
         say(result, thread_ts=event.get("ts"))
         return
 
@@ -406,8 +431,10 @@ def handle_message(event, say, client):
             if not channel_id:
                 say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
                 return
-            say("過去分を処理中です。しばらくお待ちください...")
-            result = process_past_messages(client, channel_id)
+            year, month = parse_year_month(text)
+            period = f"{year}年{month}月" if year and month else "全期間"
+            say(f"{period} の過去分を処理中です。しばらくお待ちください...")
+            result = process_past_messages(client, channel_id, year=year, month=month)
             say(result)
             return
 
