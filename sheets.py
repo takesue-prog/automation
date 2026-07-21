@@ -102,21 +102,19 @@ def _find_in_range(index: Dict, label: str, start_row: int, end_row: int) -> Opt
     return None
 
 
-def _data_col(index: Dict) -> int:
-    """Find the column for the current month's actual results (実績) data.
+def _data_col(index: Dict, date: Optional[datetime] = None) -> int:
+    """Find the column for the given month's actual results (実績) data.
 
-    When the same month label appears in both 予算 and 実績 sections,
-    use the rightmost (highest column number) occurrence, which is 実績.
+    Uses the rightmost occurrence of the month label to target 実績 over 予算.
     If GOOGLE_DATA_COLUMN is set explicitly, use that instead.
     """
     if DATA_COLUMN != 2:  # user explicitly overrode the default
         logger.info(f"Using fixed data column from env: {DATA_COLUMN}")
         return DATA_COLUMN
-    now = datetime.now()
-    target = f"{now.year}年{now.month}月"
+    d = date or datetime.now()
+    target = f"{d.year}年{d.month}月"
     matches = [(r, c) for (r, c) in index.get(target, []) if r <= 5]
     if matches:
-        # Pick the rightmost occurrence (実績 section is to the right of 予算)
         best = max(matches, key=lambda x: x[1])
         logger.info(f"Month column '{target}' found at col {best[1]} (row {best[0]}, {len(matches)} matches)")
         return best[1]
@@ -233,9 +231,10 @@ def classify_report(text: str) -> Optional[str]:
     return None
 
 
-def update_spreadsheet(text: str, reverse: bool = False) -> Tuple[Optional[str], List[str]]:
+def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = False) -> Tuple[Optional[str], List[str]]:
     """
     Classify the Slack message and update the spreadsheet.
+    msg_ts: Slack message timestamp (Unix epoch string) to determine which month to update.
     Returns (report_type, list_of_updated_labels).
     Does nothing if Google credentials are not configured.
     """
@@ -247,9 +246,11 @@ def update_spreadsheet(text: str, reverse: bool = False) -> Tuple[Optional[str],
     if not report_type:
         return (None, [])
 
+    msg_date = datetime.fromtimestamp(float(msg_ts)) if msg_ts else None
+
     ws = _worksheet()
     index = _build_index(ws)
-    col = _data_col(index)
+    col = _data_col(index, msg_date)
     logger.info(f"Using data column: {col}")
 
     # Locate section start rows

@@ -336,7 +336,7 @@ def handle_reaction_added(event, client):
 
     try:
         from sheets import update_spreadsheet
-        msg_type, labels = update_spreadsheet(text)
+        msg_type, labels = update_spreadsheet(text, msg_ts=ts)
         if msg_type:
             logger.info(f"Sheets updated [{msg_type}]: {labels}")
     except Exception as e:
@@ -380,7 +380,7 @@ def handle_reaction_removed(event, client):
 
     try:
         from sheets import update_spreadsheet
-        msg_type, labels = update_spreadsheet(text, reverse=True)
+        msg_type, labels = update_spreadsheet(text, msg_ts=ts, reverse=True)
         if msg_type:
             logger.info(f"Sheets reversed [{msg_type}]: {labels}")
     except Exception as e:
