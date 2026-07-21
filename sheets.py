@@ -233,7 +233,7 @@ def classify_report(text: str) -> Optional[str]:
     return None
 
 
-def update_spreadsheet(text: str) -> Tuple[Optional[str], List[str]]:
+def update_spreadsheet(text: str, reverse: bool = False) -> Tuple[Optional[str], List[str]]:
     """
     Classify the Slack message and update the spreadsheet.
     Returns (report_type, list_of_updated_labels).
@@ -272,8 +272,10 @@ def update_spreadsheet(text: str) -> Tuple[Optional[str], List[str]]:
 
     updated: List[str] = []
     plan_type = _extract_plan(text)
+    sign = -1 if reverse else 1
 
     def apply(sec_start: int, sec_end: int, label: str, delta: int = 1) -> None:
+        delta = delta * sign
         row = _find_in_range(index, label, sec_start, sec_end)
         if row:
             _inc(ws, row, col, delta)

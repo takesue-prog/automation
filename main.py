@@ -343,6 +343,50 @@ def handle_reaction_added(event, client):
         logger.error(f"Sheets update failed: {e}")
 
 
+@app.event("reaction_removed")
+def handle_reaction_removed(event, client):
+    if event.get("reaction") != "武居_済み":
+        return
+
+    item = event.get("item", {})
+    if item.get("type") != "message":
+        return
+
+    react_channel = item.get("channel")
+    ts = item.get("ts")
+
+    contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+    if not contract_channel_id or react_channel != contract_channel_id:
+        return
+
+    try:
+        resp = client.conversations_history(
+            channel=react_channel,
+            latest=ts,
+            oldest=ts,
+            inclusive=True,
+            limit=1,
+        )
+        messages = resp.get("messages", [])
+        if not messages:
+            return
+        text = messages[0].get("text", "")
+    except Exception as e:
+        logger.error(f"Failed to fetch message ts={ts}: {e}")
+        return
+
+    if not text:
+        return
+
+    try:
+        from sheets import update_spreadsheet
+        msg_type, labels = update_spreadsheet(text, reverse=True)
+        if msg_type:
+            logger.info(f"Sheets reversed [{msg_type}]: {labels}")
+    except Exception as e:
+        logger.error(f"Sheets reverse failed: {e}")
+
+
 if __name__ == "__main__":
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     print("⚡ Slack Bot 起動中...")
