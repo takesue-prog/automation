@@ -56,8 +56,12 @@ def ask_claude(user_message: str) -> str:
     return message.content[0].text
 
 
+_channel_id_cache: dict = {}
+
 def get_channel_id(client, channel_name: str) -> Optional[str]:
     channel_name = channel_name.lstrip("#")
+    if channel_name in _channel_id_cache:
+        return _channel_id_cache[channel_name]
     cursor = None
     while True:
         kwargs = {"types": "public_channel,private_channel", "limit": 200}
@@ -66,6 +70,7 @@ def get_channel_id(client, channel_name: str) -> Optional[str]:
         response = client.conversations_list(**kwargs)
         for ch in response.get("channels", []):
             if ch["name"] == channel_name:
+                _channel_id_cache[channel_name] = ch["id"]
                 return ch["id"]
         meta = response.get("response_metadata", {})
         cursor = meta.get("next_cursor")
