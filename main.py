@@ -345,18 +345,23 @@ def handle_reaction_added(event, client):
 
 @app.event("reaction_removed")
 def handle_reaction_removed(event, client):
+    logger.info(f"reaction_removed received: reaction={event.get('reaction')}")
     if event.get("reaction") != "武居_済み":
+        logger.info(f"reaction_removed: skipped (not 武居_済み)")
         return
 
     item = event.get("item", {})
     if item.get("type") != "message":
+        logger.info(f"reaction_removed: skipped (item type={item.get('type')})")
         return
 
     react_channel = item.get("channel")
     ts = item.get("ts")
 
     contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+    logger.info(f"reaction_removed: react_channel={react_channel}, contract_channel_id={contract_channel_id}")
     if not contract_channel_id or react_channel != contract_channel_id:
+        logger.info(f"reaction_removed: skipped (channel mismatch)")
         return
 
     try:
