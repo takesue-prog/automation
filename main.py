@@ -285,13 +285,13 @@ def setup_reminder_scheduler():
         if not reports:
             logger.info("No pending reports; skipping reminder")
             return
-        header = f"*定期リマインド*：BOT処理済みで未確認の契約報告が *{len(reports)}件* あります。確認をお願いします。\n\n"
+        header = f"<@{REMINDER_USER_ID}> *定期リマインド*：BOT処理済みで未確認の契約報告が *{len(reports)}件* あります。確認をお願いします。\n\n"
         body = format_unprocessed_list(channel_id, reports)
         try:
-            app.client.chat_postMessage(channel=REMINDER_USER_ID, text=header + body)
-            logger.info(f"Reminder sent to {REMINDER_USER_ID}: {len(reports)} reports")
+            app.client.chat_postMessage(channel=channel_id, text=header + body)
+            logger.info(f"Reminder posted to #{CONTRACT_CHANNEL_NAME}: {len(reports)} reports")
         except Exception as e:
-            logger.error(f"Failed to send reminder: {e}")
+            logger.error(f"Failed to post reminder: {e}")
 
     scheduler.add_job(send_pending_reminder, "interval", days=REMINDER_INTERVAL_DAYS)
     scheduler.start()
