@@ -284,8 +284,12 @@ def process_past_messages(client, channel_id: str, year: Optional[int] = None, m
     from sheets import classify_report as sheets_classify, update_spreadsheet
 
     messages = fetch_channel_messages(client, channel_id)
+    logger.info(f"Batch start: fetched {len(messages)} messages from channel {channel_id}")
     processed = 0
     errors = 0
+    skipped_already = 0
+    skipped_period = 0
+    skipped_type = 0
 
     period_label = f"{year}年{month}月" if year and month else "全期間"
 
@@ -294,6 +298,7 @@ def process_past_messages(client, channel_id: str, year: Optional[int] = None, m
 
         # BOT済み・武居済み・無視のいずれかがあればスキップ
         if BOT_REACTION in reactions or any(r in reactions for r in PROCESSED_REACTIONS):
+            skipped_already += 1
             continue
 
         text = msg.get("text", "")
@@ -306,23 +311,36 @@ def process_past_messages(client, channel_id: str, year: Optional[int] = None, m
         if year and month:
             msg_dt = datetime.fromtimestamp(float(ts))
             if msg_dt.year != year or msg_dt.month != month:
+                skipped_period += 1
                 continue
 
         report_type = sheets_classify(text)
         if report_type not in AUTO_PROCESS_TYPES:
+            skipped_type += 1
+            logger.info(f"Skipping ts={ts}: type={report_type!r} not in AUTO_PROCESS_TYPES")
             continue
 
+        logger.info(f"Processing ts={ts} type={report_type}")
         try:
             msg_type, labels = update_spreadsheet(text, msg_ts=ts)
             if msg_type:
-                client.reactions_add(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+                try:
+                    client.reactions_add(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+                    logger.info(f"Past processed [{msg_type}] ts={ts}: {labels}")
+                except Exception as re:
+                    logger.error(f"Failed to add :{BOT_REACTION}: ts={ts}: {re}")
                 processed += 1
-                logger.info(f"Past processed [{msg_type}] ts={ts}: {labels}")
                 time.sleep(1)  # レートリミット対策
+            else:
+                logger.warning(f"update_spreadsheet returned None for ts={ts}")
         except Exception as e:
             logger.error(f"Past processing failed ts={ts}: {e}")
             errors += 1
 
+    logger.info(
+        f"Batch done ({period_label}): processed={processed}, errors={errors}, "
+        f"skipped_already={skipped_already}, skipped_period={skipped_period}, skipped_type={skipped_type}"
+    )
     if errors:
         return f"一括処理完了（{period_label}）：*{processed}件* 処理しました（エラー {errors}件）"
     return f"✅ 一括処理完了（{period_label}）：*{processed}件* 処理しました"
@@ -428,6 +446,7 @@ def handle_message(event, say, client):
         channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
 
         if any(kw in text for kw in past_keywords):
+            logger.info(f"DM batch command received: {text!r}, channel_id={channel_id}")
             if not channel_id:
                 say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
                 return
