@@ -8,55 +8,49 @@ logger = logging.getLogger(__name__)
 
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1dA7ByXoFeA74GQfVO0eoeFJY-tJ4mLTjD2Bthvv0_Tk")
 CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
-SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "")
+SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "B実績")
 DATA_COLUMN = int(os.getenv("GOOGLE_DATA_COLUMN", "2"))
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# ── Spreadsheet section header labels ────────────────────────────────────
-SECTION_ACQUISITION = "獲得件数詳細"
-SECTION_CANCELLATION = "解約件数"
+# Section labels in column B of the spreadsheet
+SECTION_B_INDIVIDUAL = "B個人"
+SECTION_B_STORE = "B店舗"
+SECTION_LMP = "LMP版"
 
-# ── Row labels (must match exact text in the spreadsheet) ────────────────
-LABEL_FEE_INDIVIDUAL = "B個人初期費用"
-LABEL_FEE_STORE_9800 = "B店舗初期費用（¥9,800）"
-LABEL_FEE_STORE_4900 = "B店舗初期費用（半額）"
+# Item row labels (in the 科目 column)
+LABEL_PLAN_B_INDIVIDUAL = "個人プラン"
+LABEL_PLAN_B_STORE = "店舗プラン"
+LABEL_PLAN_LMP_INDIVIDUAL = "個人"
+LABEL_PLAN_LMP_STORE = "店舗"
+LABEL_FEE = "初期費用"
+LABEL_FEE_HALF = "初期費用（半額）"
 
-PLAN_LABEL: Dict[str, str] = {
-    "B個人":   "B個人　個人プラン",
-    "B店舗":   "B店舗　店舗プラン",
-    "LMP個人": "LMP版　個人",
-    "LMP店舗": "LMP版　店舗",
-}
-
-# (individual row label, store row label) per option
-OPTION_LABELS: Dict[str, Tuple[str, str]] = {
-    "システム連携":   ("B個人　システム連携",   "B店舗　システム連携"),
-    "WEB予約":        ("B個人　WEB予約",         "B店舗　WEB予約"),
-    "チャット":       ("B個人　チャット",         "B店舗　チャット"),
-    "セグメント配信": ("B個人　セグメント配信",   "B店舗　セグメント配信"),
-    "カルテ機能":     ("B個人　カルテ機能",       "B店舗　カルテ機能"),
-}
-
-# Monthly price increase per option for individual plan (used to distinguish B個人 vs B店舗)
-# If actual price change <= threshold → individual, else → store
-OPTION_INDIVIDUAL_PRICE: Dict[str, int] = {
-    "チャット":       1000,
-    "WEB予約":        2000,
-    "システム連携":   2000,
-    "セグメント配信": 1000,
-    "カルテ機能":     1000,
+OPTION_SHEET_LABELS: Dict[str, str] = {
+    "システム連携": "システム連携",
+    "WEB予約": "WEB予約",
+    "チャット": "チャット",
+    "セグメント配信": "セグメント配信",
+    "カルテ機能": "カルテ機能",
 }
 
 OPTION_NAME_MAP: Dict[str, str] = {
-    "HPB連携":       "システム連携",
-    "システム連携":   "システム連携",
-    "WEB予約機能":    "WEB予約",
-    "WEB予約":        "WEB予約",
-    "チャット機能":   "チャット",
-    "チャット":       "チャット",
+    "HPB連携": "システム連携",
+    "システム連携": "システム連携",
+    "WEB予約機能": "WEB予約",
+    "WEB予約": "WEB予約",
+    "チャット機能": "チャット",
+    "チャット": "チャット",
     "セグメント配信": "セグメント配信",
-    "カルテ機能":     "カルテ機能",
+    "カルテ機能": "カルテ機能",
+}
+
+OPTION_INDIVIDUAL_PRICE: Dict[str, int] = {
+    "チャット": 1000,
+    "WEB予約": 2000,
+    "システム連携": 2000,
+    "セグメント配信": 1000,
+    "カルテ機能": 1000,
 }
 
 
@@ -94,31 +88,29 @@ def _build_index(ws) -> Dict[str, List[Tuple[int, int]]]:
     return index
 
 
-def _section_bounds(index: Dict, header: str) -> Tuple[int, int]:
-    """Return (start_row, end_row) exclusive for a section."""
-    positions = index.get(header, [])
-    start = positions[0][0] if positions else 0
-    end = 9999
-    for h in (SECTION_ACQUISITION, SECTION_CANCELLATION):
-        for (r, _) in index.get(h, []):
-            if r > start:
-                end = min(end, r)
-    return (start, end)
-
-
-def _find_in_section(index: Dict, label: str, start: int, end: int) -> Optional[int]:
-    """Row number for label within (start, end) exclusive, or first match anywhere."""
-    for (r, _) in index.get(label, []):
-        if start < r < end:
-            return r
+def _section_start(index: Dict, label: str) -> int:
+    """Return the first row where label appears, 0 if not found."""
     positions = index.get(label, [])
-    return positions[0][0] if positions else None
+    return positions[0][0] if positions else 0
+
+
+def _find_in_range(index: Dict, label: str, start_row: int, end_row: int) -> Optional[int]:
+    """Return the row of label within [start_row, end_row), or None."""
+    for (r, c) in index.get(label, []):
+        if start_row <= r < end_row:
+            return r
+    return None
 
 
 def _data_col(index: Dict) -> int:
-    """Column for current month's data, or fallback DATA_COLUMN."""
+    """Find the column for the current month's data."""
     now = datetime.now()
-    for label in (f"{now.month}月", str(now.month), f"{now.year}/{now.month:02d}"):
+    for label in (
+        f"{now.year}年{now.month}月",
+        f"{now.month}月",
+        str(now.month),
+        f"{now.year}/{now.month:02d}",
+    ):
         positions = index.get(label, [])
         if positions:
             return positions[0][1]
@@ -146,10 +138,6 @@ def _normalize_plan(text: str) -> Optional[str]:
     return None
 
 
-def _is_individual(plan_type: Optional[str]) -> bool:
-    return plan_type in ("B個人", "LMP個人")
-
-
 def _extract_plan(text: str) -> Optional[str]:
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -158,7 +146,6 @@ def _extract_plan(text: str) -> Optional[str]:
         m = re.search(r"プラン[：:]\s*(.+)", line)
         if m and m.group(1).strip():
             return _normalize_plan(m.group(1).strip())
-        # Value on next non-empty line
         for j in range(i + 1, min(i + 4, len(lines))):
             v = lines[j].strip()
             if v and not v.startswith("＜") and not v.startswith("オプション"):
@@ -207,7 +194,6 @@ def _next_line_value(text: str, field: str) -> str:
 
 
 def _option_price_change(text: str) -> Optional[int]:
-    """Return abs(after - before) from 月額（変更前/後） fields."""
     before_str = _next_line_value(text, "月額（変更前）")
     after_str = _next_line_value(text, "月額（変更後）")
     if not before_str:
@@ -257,75 +243,129 @@ def update_spreadsheet(text: str) -> Tuple[Optional[str], List[str]]:
     ws = _worksheet()
     index = _build_index(ws)
     col = _data_col(index)
+    logger.info(f"Using data column: {col}")
 
-    acq_start, acq_end = _section_bounds(index, SECTION_ACQUISITION)
-    cancel_start, cancel_end = _section_bounds(index, SECTION_CANCELLATION)
+    # Locate section start rows
+    b_ind_start = _section_start(index, SECTION_B_INDIVIDUAL)
+    b_store_start = _section_start(index, SECTION_B_STORE)
+    lmp_start = _section_start(index, SECTION_LMP)
+
+    b_ind_end = b_store_start if b_store_start > b_ind_start else 9999
+    b_store_end = lmp_start if lmp_start > b_store_start else 9999
+    lmp_end = 9999
+    for lbl in ("OEM初期費用", "OEM　個人", "OEM個人"):
+        pos = index.get(lbl, [])
+        if pos and pos[0][0] > lmp_start:
+            lmp_end = min(lmp_end, pos[0][0])
+
+    logger.info(
+        f"Sections — B個人:{b_ind_start}-{b_ind_end}, "
+        f"B店舗:{b_store_start}-{b_store_end}, LMP:{lmp_start}-{lmp_end}"
+    )
 
     updated: List[str] = []
+    plan_type = _extract_plan(text)
 
-    def apply(section_start: int, section_end: int, label: str, delta: int = 1) -> None:
-        row = _find_in_section(index, label, section_start, section_end)
+    def apply(sec_start: int, sec_end: int, label: str, delta: int = 1) -> None:
+        row = _find_in_range(index, label, sec_start, sec_end)
         if row:
             _inc(ws, row, col, delta)
             updated.append(f"{label}({'+' if delta > 0 else ''}{delta})")
         else:
-            logger.warning(f"Label '{label}' not found in spreadsheet")
+            logger.warning(f"Label '{label}' not found in rows {sec_start}-{sec_end}")
 
-    plan_type = _extract_plan(text)
-    is_ind = _is_individual(plan_type)
+    def b_ind(label: str, delta: int = 1) -> None:
+        apply(b_ind_start, b_ind_end, label, delta)
+
+    def b_store(label: str, delta: int = 1) -> None:
+        apply(b_store_start, b_store_end, label, delta)
+
+    def lmp(label: str, delta: int = 1) -> None:
+        apply(lmp_start, lmp_end, label, delta)
+
+    is_b_ind = plan_type == "B個人"
+    is_b_store = plan_type == "B店舗"
+    is_lmp_ind = plan_type == "LMP個人"
+    is_lmp_store = plan_type == "LMP店舗"
 
     if report_type == "契約獲得":
-        if plan_type and plan_type in PLAN_LABEL:
-            apply(acq_start, acq_end, PLAN_LABEL[plan_type])
-
-        if not _is_sns_in_contract(text):
-            fee = _extract_initial_fee(text)
-            if fee is not None:
-                if is_ind:
-                    apply(acq_start, acq_end, LABEL_FEE_INDIVIDUAL)
-                elif fee >= 9800:
-                    apply(acq_start, acq_end, LABEL_FEE_STORE_9800)
-                else:
-                    apply(acq_start, acq_end, LABEL_FEE_STORE_4900)
-
-        for opt in _extract_options(text):
-            if opt in OPTION_LABELS:
-                apply(acq_start, acq_end, OPTION_LABELS[opt][0 if is_ind else 1])
+        if is_b_ind:
+            b_ind(LABEL_PLAN_B_INDIVIDUAL)
+            if not _is_sns_in_contract(text):
+                fee = _extract_initial_fee(text)
+                if fee is not None:
+                    b_ind(LABEL_FEE)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_ind(lbl)
+        elif is_b_store:
+            b_store(LABEL_PLAN_B_STORE)
+            if not _is_sns_in_contract(text):
+                fee = _extract_initial_fee(text)
+                if fee is not None:
+                    fee_label = LABEL_FEE_HALF if fee < 9800 else LABEL_FEE
+                    b_store(fee_label)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_store(lbl)
+        elif is_lmp_ind:
+            lmp(LABEL_PLAN_LMP_INDIVIDUAL)
+        elif is_lmp_store:
+            lmp(LABEL_PLAN_LMP_STORE)
 
     elif report_type == "解約":
-        if plan_type and plan_type in PLAN_LABEL:
-            apply(cancel_start, cancel_end, PLAN_LABEL[plan_type])
-        for opt in _extract_options(text):
-            if opt in OPTION_LABELS:
-                apply(cancel_start, cancel_end, OPTION_LABELS[opt][0 if is_ind else 1])
+        if is_b_ind:
+            b_ind(LABEL_PLAN_B_INDIVIDUAL, delta=-1)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_ind(lbl, delta=-1)
+        elif is_b_store:
+            b_store(LABEL_PLAN_B_STORE, delta=-1)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_store(lbl, delta=-1)
+        elif is_lmp_ind:
+            lmp(LABEL_PLAN_LMP_INDIVIDUAL, delta=-1)
+        elif is_lmp_store:
+            lmp(LABEL_PLAN_LMP_STORE, delta=-1)
 
     elif report_type == "課金前解約":
-        if plan_type and plan_type in PLAN_LABEL:
-            apply(acq_start, acq_end, PLAN_LABEL[plan_type], delta=-1)
-        fee = _extract_initial_fee(text)
-        if fee and fee > 0:
-            if is_ind:
-                apply(acq_start, acq_end, LABEL_FEE_INDIVIDUAL, delta=-1)
-            elif fee >= 9800:
-                apply(acq_start, acq_end, LABEL_FEE_STORE_9800, delta=-1)
-            else:
-                apply(acq_start, acq_end, LABEL_FEE_STORE_4900, delta=-1)
-        for opt in _extract_options(text):
-            if opt in OPTION_LABELS:
-                apply(acq_start, acq_end, OPTION_LABELS[opt][0 if is_ind else 1], delta=-1)
+        if is_b_ind:
+            b_ind(LABEL_PLAN_B_INDIVIDUAL, delta=-1)
+            fee = _extract_initial_fee(text)
+            if fee and fee > 0:
+                b_ind(LABEL_FEE, delta=-1)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_ind(lbl, delta=-1)
+        elif is_b_store:
+            b_store(LABEL_PLAN_B_STORE, delta=-1)
+            fee = _extract_initial_fee(text)
+            if fee and fee > 0:
+                fee_label = LABEL_FEE_HALF if fee < 9800 else LABEL_FEE
+                b_store(fee_label, delta=-1)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    b_store(lbl, delta=-1)
 
     elif report_type in ("オプション追加", "オプション解約"):
+        delta = 1 if report_type == "オプション追加" else -1
         opt_text = _next_line_value(text, "対象オプション").strip()
         opt_name = OPTION_NAME_MAP.get(opt_text)
-        if opt_name and opt_name in OPTION_LABELS:
+        if opt_name and opt_name in OPTION_SHEET_LABELS:
+            lbl = OPTION_SHEET_LABELS[opt_name]
             change = _option_price_change(text)
             if change is not None:
-                opt_is_ind = _is_individual_by_price(opt_name, change)
-                label = OPTION_LABELS[opt_name][0 if opt_is_ind else 1]
-                if report_type == "オプション追加":
-                    apply(acq_start, acq_end, label)
+                if _is_individual_by_price(opt_name, change):
+                    b_ind(lbl, delta=delta)
                 else:
-                    apply(cancel_start, cancel_end, label)
+                    b_store(lbl, delta=delta)
             else:
                 logger.warning("Could not determine price change for option message")
         else:
@@ -337,10 +377,10 @@ def update_spreadsheet(text: str) -> Tuple[Optional[str], List[str]]:
         if bm:
             before = int(bm.group(1).replace(",", ""))
             after = int(am.group(1).replace(",", "")) if am else 0
-            lbl_before = LABEL_FEE_STORE_9800 if before >= 9800 else LABEL_FEE_STORE_4900
-            apply(acq_start, acq_end, lbl_before, delta=-1)
+            lbl_before = LABEL_FEE_HALF if before < 9800 else LABEL_FEE
+            b_store(lbl_before, delta=-1)
             if after > 0:
-                lbl_after = LABEL_FEE_STORE_9800 if after >= 9800 else LABEL_FEE_STORE_4900
-                apply(acq_start, acq_end, lbl_after, delta=1)
+                lbl_after = LABEL_FEE_HALF if after < 9800 else LABEL_FEE
+                b_store(lbl_after, delta=1)
 
     return (report_type, updated)
