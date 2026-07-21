@@ -34,6 +34,12 @@ PROCESSED_REACTIONS = [
 IGNORE_REACTION = os.getenv("IGNORE_REACTION", "無視")
 UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "60"))
 
+# 自動処理対象の報告種別
+AUTO_PROCESS_TYPES = frozenset({"契約獲得", "オプション追加", "オプション解約", "解約", "課金前解約"})
+BOT_REACTION = os.getenv("BOT_REACTION", "bot_済み")
+REMINDER_USER_ID = os.getenv("REMINDER_USER_ID", "")
+REMINDER_INTERVAL_DAYS = int(os.getenv("REMINDER_INTERVAL_DAYS", "3"))
+
 # 集計対象の報告種別（メッセージ内のキーワードで判定）
 REPORT_TYPES = [
     ("契約獲得", "🎉"),
@@ -95,6 +101,19 @@ def extract_store_name(text: str) -> str:
     return ""
 
 
+def extract_store_name_plain(text: str) -> str:
+    """対象店舗ブロックがない場合は先頭付近の店舗名行を返す"""
+    result = extract_store_name(text)
+    if result:
+        return result
+    lines = text.splitlines()
+    for line in lines[1:6]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith(":") and not stripped.startswith("＜") and not stripped.startswith("ID"):
+            return stripped
+    return ""
+
+
 def extract_field_value(text: str, field: str) -> str:
     """fieldキーワードの次の非空行の値を返す"""
     lines = text.splitlines()
@@ -153,6 +172,20 @@ def get_unprocessed_reports(client, channel_id: str) -> list:
             unprocessed.append(msg)
     unprocessed.sort(key=lambda m: float(m["ts"]))
     return unprocessed
+
+
+def get_pending_review_reports(client, channel_id: str) -> list:
+    """BOT済みはついているが武居_済み/無視がついていないメッセージを返す"""
+    messages = fetch_channel_messages(client, channel_id)
+    result = []
+    for msg in messages:
+        reactions = [r["name"] for r in msg.get("reactions", [])]
+        has_bot = BOT_REACTION in reactions
+        has_processed = any(r in reactions for r in PROCESSED_REACTIONS)
+        if has_bot and not has_processed:
+            result.append(msg)
+    result.sort(key=lambda m: float(m["ts"]))
+    return result
 
 
 def get_aggregation_reports(client, channel_id: str) -> list:
@@ -230,6 +263,42 @@ def format_aggregation(messages: list) -> str:
     return "\n".join(lines)
 
 
+def setup_reminder_scheduler():
+    if not REMINDER_USER_ID:
+        logger.info("REMINDER_USER_ID not set; reminder scheduler not started")
+        return None
+
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+    except ImportError:
+        logger.warning("APScheduler not installed; reminder scheduler not started. Run: pip install APScheduler")
+        return None
+
+    scheduler = BackgroundScheduler()
+
+    def send_pending_reminder():
+        channel_id = get_channel_id(app.client, CONTRACT_CHANNEL_NAME)
+        if not channel_id:
+            logger.error("Cannot find contract channel for reminder")
+            return
+        reports = get_pending_review_reports(app.client, channel_id)
+        if not reports:
+            logger.info("No pending reports; skipping reminder")
+            return
+        header = f"*定期リマインド*：BOT処理済みで未確認の契約報告が *{len(reports)}件* あります。確認をお願いします。\n\n"
+        body = format_unprocessed_list(channel_id, reports)
+        try:
+            app.client.chat_postMessage(channel=REMINDER_USER_ID, text=header + body)
+            logger.info(f"Reminder sent to {REMINDER_USER_ID}: {len(reports)} reports")
+        except Exception as e:
+            logger.error(f"Failed to send reminder: {e}")
+
+    scheduler.add_job(send_pending_reminder, "interval", days=REMINDER_INTERVAL_DAYS)
+    scheduler.start()
+    logger.info(f"Reminder scheduler started: every {REMINDER_INTERVAL_DAYS} days → {REMINDER_USER_ID}")
+    return scheduler
+
+
 @app.event("app_mention")
 def handle_mention(event, say, client):
     text = event.get("text", "")
@@ -267,41 +336,76 @@ def handle_mention(event, say, client):
 
 
 @app.event("message")
-def handle_dm(event, say, client):
-    if event.get("channel_type") != "im":
-        return
-    if event.get("bot_id"):
-        return
-
-    text = event.get("text", "").strip()
-    if not text:
-        return
-
-    listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
-    aggregation_keywords = ["集計", "summary", "サマリー"]
-
-    channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
-
-    if any(kw in text for kw in aggregation_keywords):
-        if not channel_id:
-            say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
+def handle_message(event, say, client):
+    # ── DM handling ──────────────────────────────────────────────────────────
+    if event.get("channel_type") == "im":
+        if event.get("bot_id"):
             return
-        messages = get_aggregation_reports(client, channel_id)
-        reply = format_aggregation(messages)
+        text = event.get("text", "").strip()
+        if not text:
+            return
+
+        listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
+        aggregation_keywords = ["集計", "summary", "サマリー"]
+
+        channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+
+        if any(kw in text for kw in aggregation_keywords):
+            if not channel_id:
+                say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
+                return
+            messages = get_aggregation_reports(client, channel_id)
+            reply = format_aggregation(messages)
+            say(reply)
+            return
+
+        if any(kw in text for kw in listing_keywords):
+            if not channel_id:
+                say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
+                return
+            reports = get_unprocessed_reports(client, channel_id)
+            reply = format_unprocessed_list(channel_id, reports)
+            say(reply)
+            return
+
+        reply = ask_claude(text)
         say(reply)
         return
 
-    if any(kw in text for kw in listing_keywords):
-        if not channel_id:
-            say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
-            return
-        reports = get_unprocessed_reports(client, channel_id)
-        reply = format_unprocessed_list(channel_id, reports)
-        say(reply)
+    # ── Contract channel: auto-process new messages ───────────────────────────
+    if event.get("bot_id") or event.get("subtype"):
         return
 
-    reply = ask_claude(text)
-    say(reply)
+    contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+    if not contract_channel_id or event.get("channel") != contract_channel_id:
+        return
+
+    text = event.get("text", "")
+    ts = event.get("ts")
+
+    if not text or text.startswith("<@"):
+        return
+
+    from sheets import classify_report as sheets_classify, update_spreadsheet
+    report_type = sheets_classify(text)
+    if report_type not in AUTO_PROCESS_TYPES:
+        return
+
+    logger.info(f"Auto-processing [{report_type}] ts={ts}")
+
+    try:
+        msg_type, labels = update_spreadsheet(text, msg_ts=ts)
+        if msg_type:
+            logger.info(f"Auto sheets updated [{msg_type}]: {labels}")
+    except Exception as e:
+        logger.error(f"Auto sheets update failed: {e}")
+        return
+
+    try:
+        client.reactions_add(channel=event["channel"], timestamp=ts, name=BOT_REACTION)
+        logger.info(f"Added :{BOT_REACTION}: to ts={ts}")
+    except Exception as e:
+        logger.error(f"Failed to add :{BOT_REACTION}: reaction: {e}")
 
 
 @app.event("reaction_added")
@@ -331,12 +435,19 @@ def handle_reaction_added(event, client):
         messages = resp.get("messages", [])
         if not messages:
             return
-        text = messages[0].get("text", "")
+        msg = messages[0]
+        text = msg.get("text", "")
+        reactions = [r["name"] for r in msg.get("reactions", [])]
     except Exception as e:
         logger.error(f"Failed to fetch message ts={ts}: {e}")
         return
 
     if not text:
+        return
+
+    # BOT済みがついていればBOTが既にスプシ更新済み → 武居済みは確認マーカーのみ
+    if BOT_REACTION in reactions:
+        logger.info(f"ts={ts}: BOT already processed; 武居済み = verified only (no sheet update)")
         return
 
     try:
@@ -350,23 +461,18 @@ def handle_reaction_added(event, client):
 
 @app.event("reaction_removed")
 def handle_reaction_removed(event, client):
-    logger.info(f"reaction_removed received: reaction={event.get('reaction')}")
     if event.get("reaction") != "武居_済み":
-        logger.info(f"reaction_removed: skipped (not 武居_済み)")
         return
 
     item = event.get("item", {})
     if item.get("type") != "message":
-        logger.info(f"reaction_removed: skipped (item type={item.get('type')})")
         return
 
     react_channel = item.get("channel")
     ts = item.get("ts")
 
     contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
-    logger.info(f"reaction_removed: react_channel={react_channel}, contract_channel_id={contract_channel_id}")
     if not contract_channel_id or react_channel != contract_channel_id:
-        logger.info(f"reaction_removed: skipped (channel mismatch)")
         return
 
     try:
@@ -380,12 +486,19 @@ def handle_reaction_removed(event, client):
         messages = resp.get("messages", [])
         if not messages:
             return
-        text = messages[0].get("text", "")
+        msg = messages[0]
+        text = msg.get("text", "")
+        reactions = [r["name"] for r in msg.get("reactions", [])]
     except Exception as e:
         logger.error(f"Failed to fetch message ts={ts}: {e}")
         return
 
     if not text:
+        return
+
+    # BOT済みがついていれば武居済みの取り外しはスプシに影響しない
+    if BOT_REACTION in reactions:
+        logger.info(f"ts={ts}: BOT processed; 武居済み removal is not a reversal")
         return
 
     try:
@@ -398,6 +511,7 @@ def handle_reaction_removed(event, client):
 
 
 if __name__ == "__main__":
+    setup_reminder_scheduler()
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     print("⚡ Slack Bot 起動中...")
     handler.start()
