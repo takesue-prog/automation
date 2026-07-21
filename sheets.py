@@ -103,17 +103,14 @@ def _find_in_range(index: Dict, label: str, start_row: int, end_row: int) -> Opt
 
 
 def _data_col(index: Dict) -> int:
-    """Find the column for the current month's data."""
+    """Find the column for the current month's data (header rows only)."""
     now = datetime.now()
-    for label in (
-        f"{now.year}年{now.month}月",
-        f"{now.month}月",
-        str(now.month),
-        f"{now.year}/{now.month:02d}",
-    ):
-        positions = index.get(label, [])
-        if positions:
-            return positions[0][1]
+    target = f"{now.year}年{now.month}月"
+    for (r, c) in index.get(target, []):
+        if r <= 5:
+            logger.info(f"Month column '{target}' found at col {c} (row {r})")
+            return c
+    logger.warning(f"Month column '{target}' not found in header rows; using DATA_COLUMN={DATA_COLUMN}")
     return DATA_COLUMN
 
 
