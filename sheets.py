@@ -13,10 +13,15 @@ DATA_COLUMN = int(os.getenv("GOOGLE_DATA_COLUMN", "2"))
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-# Section labels in column B of the spreadsheet
+# Section labels — 契約件数
 SECTION_B_INDIVIDUAL = "B個人"
 SECTION_B_STORE = "B店舗"
 SECTION_LMP = "LMP版"
+
+# Section labels — 解約件数
+SECTION_CANCEL = "解約件数"
+SECTION_CANCEL_INDIVIDUAL = "個人利用"
+SECTION_CANCEL_STORE = "店舗利用"
 
 # Item row labels (in the 科目 column)
 LABEL_PLAN_B_INDIVIDUAL = "個人プラン"
@@ -94,6 +99,14 @@ def _section_start(index: Dict, label: str) -> int:
     """Return the first row where label appears, 0 if not found."""
     positions = index.get(label, [])
     return positions[0][0] if positions else 0
+
+
+def _section_start_after(index: Dict, label: str, min_row: int) -> int:
+    """Return the first row where label appears at or after min_row, 0 if not found."""
+    for (r, _c) in sorted(index.get(label, []), key=lambda x: x[0]):
+        if r >= min_row:
+            return r
+    return 0
 
 
 def _find_in_range(index: Dict, label: str, start_row: int, end_row: int) -> Optional[int]:
@@ -256,7 +269,7 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
     col = _data_col(index, msg_date)
     logger.info(f"Using data column: {col}")
 
-    # Locate section start rows
+    # Locate 契約件数 section start rows
     b_ind_start = _section_start(index, SECTION_B_INDIVIDUAL)
     b_store_start = _section_start(index, SECTION_B_STORE)
     lmp_start = _section_start(index, SECTION_LMP)
@@ -269,9 +282,21 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
         if pos and pos[0][0] > lmp_start:
             lmp_end = min(lmp_end, pos[0][0])
 
+    # Locate 解約件数 section start rows
+    cancel_start = _section_start(index, SECTION_CANCEL)
+    cancel_ind_start = _section_start_after(index, SECTION_CANCEL_INDIVIDUAL, cancel_start) if cancel_start else 0
+    cancel_store_start = _section_start_after(index, SECTION_CANCEL_STORE, cancel_start) if cancel_start else 0
+    cancel_lmp_start = _section_start_after(index, SECTION_LMP, cancel_start) if cancel_start else 0
+
+    cancel_ind_end = cancel_store_start if cancel_store_start > cancel_ind_start else 9999
+    cancel_store_end = cancel_lmp_start if cancel_lmp_start > cancel_store_start else 9999
+    cancel_lmp_end = 9999
+
     logger.info(
         f"Sections — B個人:{b_ind_start}-{b_ind_end}, "
-        f"B店舗:{b_store_start}-{b_store_end}, LMP:{lmp_start}-{lmp_end}"
+        f"B店舗:{b_store_start}-{b_store_end}, LMP:{lmp_start}-{lmp_end}, "
+        f"解約件数:{cancel_start}(個人利用:{cancel_ind_start}-{cancel_ind_end}, "
+        f"店舗利用:{cancel_store_start}-{cancel_store_end}, LMP:{cancel_lmp_start}-{cancel_lmp_end})"
     )
 
     updated: List[str] = []
@@ -295,6 +320,15 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
 
     def lmp(label: str, delta: int = 1) -> None:
         apply(lmp_start, lmp_end, label, delta)
+
+    def c_ind(label: str, delta: int = 1) -> None:
+        apply(cancel_ind_start, cancel_ind_end, label, delta)
+
+    def c_store(label: str, delta: int = 1) -> None:
+        apply(cancel_store_start, cancel_store_end, label, delta)
+
+    def c_lmp(label: str, delta: int = 1) -> None:
+        apply(cancel_lmp_start, cancel_lmp_end, label, delta)
 
     is_b_ind = plan_type == "B個人"
     is_b_store = plan_type == "B店舗"
@@ -330,21 +364,13 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
 
     elif report_type == "解約":
         if is_b_ind:
-            b_ind(LABEL_PLAN_B_INDIVIDUAL, delta=-1)
-            for opt in _extract_options(text):
-                lbl = OPTION_SHEET_LABELS.get(opt)
-                if lbl:
-                    b_ind(lbl, delta=-1)
+            c_ind(LABEL_PLAN_B_INDIVIDUAL)
         elif is_b_store:
-            b_store(LABEL_PLAN_B_STORE, delta=-1)
-            for opt in _extract_options(text):
-                lbl = OPTION_SHEET_LABELS.get(opt)
-                if lbl:
-                    b_store(lbl, delta=-1)
+            c_store(LABEL_PLAN_B_STORE)
         elif is_lmp_ind:
-            lmp(LABEL_PLAN_LMP_INDIVIDUAL, delta=-1)
+            c_lmp(LABEL_PLAN_LMP_INDIVIDUAL)
         elif is_lmp_store:
-            lmp(LABEL_PLAN_LMP_STORE, delta=-1)
+            c_lmp(LABEL_PLAN_LMP_STORE)
 
     elif report_type == "課金前解約":
         if is_b_ind:
@@ -367,22 +393,41 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
                 if lbl:
                     b_store(lbl, delta=-1)
 
-    elif report_type in ("オプション追加", "オプション解約"):
-        delta = 1 if report_type == "オプション追加" else -1
+    elif report_type == "オプション追加":
         options = _extract_options(text)
         if options:
             change = _option_price_change(text)
             if change is not None:
-                # Compare total price change against sum of B個人 thresholds
                 total_ind_threshold = sum(OPTION_INDIVIDUAL_PRICE.get(opt, 1500) for opt in options)
                 is_ind = change <= total_ind_threshold
                 for opt in options:
                     lbl = OPTION_SHEET_LABELS.get(opt)
                     if lbl:
                         if is_ind:
-                            b_ind(lbl, delta=delta)
+                            b_ind(lbl)
                         else:
-                            b_store(lbl, delta=delta)
+                            b_store(lbl)
+                    else:
+                        logger.warning(f"Unknown option label: '{opt}'")
+            else:
+                logger.warning("Could not determine price change for option message")
+        else:
+            logger.warning("No options found in message")
+
+    elif report_type == "オプション解約":
+        options = _extract_options(text)
+        if options:
+            change = _option_price_change(text)
+            if change is not None:
+                total_ind_threshold = sum(OPTION_INDIVIDUAL_PRICE.get(opt, 1500) for opt in options)
+                is_ind = change <= total_ind_threshold
+                for opt in options:
+                    lbl = OPTION_SHEET_LABELS.get(opt)
+                    if lbl:
+                        if is_ind:
+                            c_ind(lbl)
+                        else:
+                            c_store(lbl)
                     else:
                         logger.warning(f"Unknown option label: '{opt}'")
             else:
