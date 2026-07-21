@@ -37,10 +37,12 @@ OPTION_SHEET_LABELS: Dict[str, str] = {
 OPTION_NAME_MAP: Dict[str, str] = {
     "HPB連携": "システム連携",
     "システム連携": "システム連携",
+    "システム連携機能": "システム連携",
     "WEB予約機能": "WEB予約",
     "WEB予約": "WEB予約",
     "チャット機能": "チャット",
     "チャット": "チャット",
+    "セグメント配信機能": "セグメント配信",
     "セグメント配信": "セグメント配信",
     "カルテ機能": "カルテ機能",
 }
@@ -223,7 +225,8 @@ def _is_individual_by_price(opt_name: str, price_change: int) -> bool:
 
 def classify_report(text: str) -> Optional[str]:
     head = " ".join(text.splitlines()[:5])
-    for label in ("課金前解約", "解約", "契約獲得", "オプション追加", "オプション解約"):
+    # Check more specific labels before their substrings (e.g. オプション解約 before 解約)
+    for label in ("課金前解約", "オプション解約", "オプション追加", "解約", "契約獲得"):
         if label in head:
             return label
     if "SNSシェアキャンペーン適用" in text:
@@ -366,20 +369,26 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
 
     elif report_type in ("オプション追加", "オプション解約"):
         delta = 1 if report_type == "オプション追加" else -1
-        opt_text = _next_line_value(text, "対象オプション").strip()
-        opt_name = OPTION_NAME_MAP.get(opt_text)
-        if opt_name and opt_name in OPTION_SHEET_LABELS:
-            lbl = OPTION_SHEET_LABELS[opt_name]
+        options = _extract_options(text)
+        if options:
             change = _option_price_change(text)
             if change is not None:
-                if _is_individual_by_price(opt_name, change):
-                    b_ind(lbl, delta=delta)
-                else:
-                    b_store(lbl, delta=delta)
+                # Compare total price change against sum of B個人 thresholds
+                total_ind_threshold = sum(OPTION_INDIVIDUAL_PRICE.get(opt, 1500) for opt in options)
+                is_ind = change <= total_ind_threshold
+                for opt in options:
+                    lbl = OPTION_SHEET_LABELS.get(opt)
+                    if lbl:
+                        if is_ind:
+                            b_ind(lbl, delta=delta)
+                        else:
+                            b_store(lbl, delta=delta)
+                    else:
+                        logger.warning(f"Unknown option label: '{opt}'")
             else:
                 logger.warning("Could not determine price change for option message")
         else:
-            logger.warning(f"Unknown option: '{opt_text}'")
+            logger.warning("No options found in message")
 
     elif report_type == "SNSシェア":
         bm = re.search(r"変更前[：:]\s*([0-9,]+)", text)
