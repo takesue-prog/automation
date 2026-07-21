@@ -365,8 +365,16 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
     elif report_type == "解約":
         if is_b_ind:
             c_ind(LABEL_PLAN_B_INDIVIDUAL)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    c_ind(lbl)
         elif is_b_store:
             c_store(LABEL_PLAN_B_STORE)
+            for opt in _extract_options(text):
+                lbl = OPTION_SHEET_LABELS.get(opt)
+                if lbl:
+                    c_store(lbl)
         elif is_lmp_ind:
             c_lmp(LABEL_PLAN_LMP_INDIVIDUAL)
         elif is_lmp_store:
