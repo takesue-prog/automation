@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -263,6 +264,47 @@ def format_aggregation(messages: list) -> str:
     return "\n".join(lines)
 
 
+def process_past_messages(client, channel_id: str) -> str:
+    """未処理の過去メッセージを一括でスプシ更新 + BOT済みスタンプ付与する"""
+    from sheets import classify_report as sheets_classify, update_spreadsheet
+
+    messages = fetch_channel_messages(client, channel_id)
+    processed = 0
+    errors = 0
+
+    for msg in messages:
+        reactions = [r["name"] for r in msg.get("reactions", [])]
+
+        # BOT済み・武居済み・無視のいずれかがあればスキップ
+        if BOT_REACTION in reactions or any(r in reactions for r in PROCESSED_REACTIONS):
+            continue
+
+        text = msg.get("text", "")
+        ts = msg.get("ts")
+
+        if not text or text.startswith("<@"):
+            continue
+
+        report_type = sheets_classify(text)
+        if report_type not in AUTO_PROCESS_TYPES:
+            continue
+
+        try:
+            msg_type, labels = update_spreadsheet(text, msg_ts=ts)
+            if msg_type:
+                client.reactions_add(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+                processed += 1
+                logger.info(f"Past processed [{msg_type}] ts={ts}: {labels}")
+                time.sleep(1)  # レートリミット対策
+        except Exception as e:
+            logger.error(f"Past processing failed ts={ts}: {e}")
+            errors += 1
+
+    if errors:
+        return f"一括処理完了：*{processed}件* 処理しました（エラー {errors}件）"
+    return f"✅ 一括処理完了：*{processed}件* 処理しました"
+
+
 def setup_reminder_scheduler():
     if not REMINDER_USER_ID:
         logger.info("REMINDER_USER_ID not set; reminder scheduler not started")
@@ -309,12 +351,20 @@ def handle_mention(event, say, client):
 
     listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
     aggregation_keywords = ["集計", "summary", "サマリー"]
+    past_keywords = ["過去分処理", "一括処理", "過去分"]
 
     is_listing = not user_text or any(kw in user_text for kw in listing_keywords)
     is_aggregation = any(kw in user_text for kw in aggregation_keywords)
+    is_past = any(kw in user_text for kw in past_keywords)
 
     channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
     is_contract_channel = channel_id and event.get("channel") == channel_id
+
+    if is_past and is_contract_channel:
+        say("過去分を処理中です。しばらくお待ちください...", thread_ts=event.get("ts"))
+        result = process_past_messages(client, channel_id)
+        say(result, thread_ts=event.get("ts"))
+        return
 
     if is_aggregation and is_contract_channel:
         messages = get_aggregation_reports(client, channel_id)
@@ -348,8 +398,18 @@ def handle_message(event, say, client):
 
         listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
         aggregation_keywords = ["集計", "summary", "サマリー"]
+        past_keywords = ["過去分処理", "一括処理", "過去分"]
 
         channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+
+        if any(kw in text for kw in past_keywords):
+            if not channel_id:
+                say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
+                return
+            say("過去分を処理中です。しばらくお待ちください...")
+            result = process_past_messages(client, channel_id)
+            say(result)
+            return
 
         if any(kw in text for kw in aggregation_keywords):
             if not channel_id:
