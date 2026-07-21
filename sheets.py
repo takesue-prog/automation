@@ -247,10 +247,17 @@ def classify_report(text: str) -> Optional[str]:
     return None
 
 
-def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = False) -> Tuple[Optional[str], List[str]]:
+def update_spreadsheet(
+    text: str,
+    msg_ts: Optional[str] = None,
+    reverse: bool = False,
+    ws=None,
+    index: Optional[Dict] = None,
+) -> Tuple[Optional[str], List[str]]:
     """
     Classify the Slack message and update the spreadsheet.
     msg_ts: Slack message timestamp (Unix epoch string) to determine which month to update.
+    ws/index: Pre-built worksheet and index for batch operations (avoids repeated full-sheet reads).
     Returns (report_type, list_of_updated_labels).
     Does nothing if Google credentials are not configured.
     """
@@ -264,8 +271,9 @@ def update_spreadsheet(text: str, msg_ts: Optional[str] = None, reverse: bool = 
 
     msg_date = datetime.fromtimestamp(float(msg_ts)) if msg_ts else None
 
-    ws = _worksheet()
-    index = _build_index(ws)
+    if ws is None:
+        ws = _worksheet()
+        index = _build_index(ws)
     col = _data_col(index, msg_date)
     logger.info(f"Using data column: {col}")
 

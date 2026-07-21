@@ -279,9 +279,46 @@ def parse_year_month(text: str) -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
+def _reactions_add_with_retry(client, channel: str, timestamp: str, name: str, max_retries: int = 3) -> None:
+    """Add a reaction with exponential backoff on rate limiting. Treats already_reacted as success."""
+    for attempt in range(max_retries + 1):
+        try:
+            client.reactions_add(channel=channel, timestamp=timestamp, name=name)
+            return
+        except Exception as e:
+            err_str = str(e).lower()
+            if "already_reacted" in err_str:
+                return  # Already there — counts as success
+            if "ratelimited" in err_str or "rate_limited" in err_str or "429" in err_str:
+                wait = 2 ** attempt
+                logger.warning(f"reactions_add rate limited (attempt {attempt+1}); retrying in {wait}s")
+                time.sleep(wait)
+            else:
+                raise
+    # Final attempt after all waits
+    client.reactions_add(channel=channel, timestamp=timestamp, name=name)
+
+
 def process_past_messages(client, channel_id: str, year: Optional[int] = None, month: Optional[int] = None) -> str:
     """未処理の過去メッセージを一括でスプシ更新 + BOT済みスタンプ付与する"""
-    from sheets import classify_report as sheets_classify, update_spreadsheet
+    from sheets import (
+        classify_report as sheets_classify,
+        update_spreadsheet,
+        _worksheet,
+        _build_index,
+        _is_configured,
+    )
+
+    # ワークシートとインデックスを一括処理の前に1回だけ読み込む（API呼び出しを大幅削減）
+    ws = None
+    index = None
+    if _is_configured():
+        try:
+            ws = _worksheet()
+            index = _build_index(ws)
+            logger.info("Worksheet and index pre-built for batch (single read)")
+        except Exception as e:
+            logger.error(f"Failed to pre-build worksheet: {e}")
 
     messages = fetch_channel_messages(client, channel_id)
     logger.info(f"Batch start: fetched {len(messages)} messages from channel {channel_id}")
@@ -322,15 +359,15 @@ def process_past_messages(client, channel_id: str, year: Optional[int] = None, m
 
         logger.info(f"Processing ts={ts} type={report_type}")
         try:
-            msg_type, labels = update_spreadsheet(text, msg_ts=ts)
+            msg_type, labels = update_spreadsheet(text, msg_ts=ts, ws=ws, index=index)
             if msg_type:
                 try:
-                    client.reactions_add(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+                    _reactions_add_with_retry(client, channel_id, ts, BOT_REACTION)
                     logger.info(f"Past processed [{msg_type}] ts={ts}: {labels}")
                 except Exception as re:
                     logger.error(f"Failed to add :{BOT_REACTION}: ts={ts}: {re}")
                 processed += 1
-                time.sleep(1)  # レートリミット対策
+                time.sleep(2)  # レートリミット対策（Google Sheets + Slack）
             else:
                 logger.warning(f"update_spreadsheet returned None for ts={ts}")
         except Exception as e:
