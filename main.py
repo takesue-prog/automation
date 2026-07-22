@@ -582,7 +582,10 @@ def handle_message(event, say, client):
         return
 
     # ── Contract channel: auto-process new messages ───────────────────────────
-    if event.get("bot_id") or event.get("subtype"):
+    # bot_id チェックは外す（ワークフロー投稿も bot_id を持つため）
+    # message_changed / message_deleted などのサブタイプはスキップ
+    subtype = event.get("subtype")
+    if subtype and subtype not in ("bot_message",):
         return
 
     contract_channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
