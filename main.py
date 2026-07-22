@@ -297,18 +297,25 @@ def reset_bot_stamps(client, channel_id: str, year: Optional[int] = None, month:
             if msg_dt.year != year or msg_dt.month != month:
                 continue
 
-        try:
-            client.reactions_remove(channel=channel_id, timestamp=ts, name=BOT_REACTION)
-            removed += 1
-            logger.info(f"Removed :{BOT_REACTION}: from ts={ts}")
-            time.sleep(1)
-        except Exception as e:
-            err_str = str(e).lower()
-            if "no_reaction" in err_str:
-                pass  # already removed
-            else:
-                logger.error(f"Failed to remove stamp ts={ts}: {e}")
-                errors += 1
+        for attempt in range(4):
+            try:
+                client.reactions_remove(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+                removed += 1
+                logger.info(f"Removed :{BOT_REACTION}: from ts={ts}")
+                time.sleep(1)
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if "no_reaction" in err_str:
+                    break  # already removed
+                if "ratelimited" in err_str or "rate_limited" in err_str:
+                    wait = 2 ** attempt
+                    logger.warning(f"reactions_remove rate limited; retrying in {wait}s")
+                    time.sleep(wait)
+                else:
+                    logger.error(f"Failed to remove stamp ts={ts}: {e}")
+                    errors += 1
+                    break
 
     if errors:
         return f"スタンプ削除完了（{period_label}）：*{removed}件* 削除しました（エラー {errors}件）"
