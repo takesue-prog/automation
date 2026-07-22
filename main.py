@@ -279,6 +279,42 @@ def parse_year_month(text: str) -> Tuple[Optional[int], Optional[int]]:
     return None, None
 
 
+def reset_bot_stamps(client, channel_id: str, year: Optional[int] = None, month: Optional[int] = None) -> str:
+    """指定期間のBOT済みスタンプを一括削除する（スプシ再処理の準備用）"""
+    messages = fetch_channel_messages(client, channel_id)
+    removed = 0
+    errors = 0
+    period_label = f"{year}年{month}月" if year and month else "全期間"
+
+    for msg in messages:
+        reactions = [r["name"] for r in msg.get("reactions", [])]
+        if BOT_REACTION not in reactions:
+            continue
+
+        ts = msg.get("ts")
+        if year and month:
+            msg_dt = datetime.fromtimestamp(float(ts))
+            if msg_dt.year != year or msg_dt.month != month:
+                continue
+
+        try:
+            client.reactions_remove(channel=channel_id, timestamp=ts, name=BOT_REACTION)
+            removed += 1
+            logger.info(f"Removed :{BOT_REACTION}: from ts={ts}")
+            time.sleep(1)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "no_reaction" in err_str:
+                pass  # already removed
+            else:
+                logger.error(f"Failed to remove stamp ts={ts}: {e}")
+                errors += 1
+
+    if errors:
+        return f"スタンプ削除完了（{period_label}）：*{removed}件* 削除しました（エラー {errors}件）"
+    return f"✅ スタンプ削除完了（{period_label}）：*{removed}件* のBOT済みスタンプを削除しました\n次にスプレッドシートのデータをリセットして、`過去分処理 {period_label}` を実行してください。"
+
+
 def _reactions_add_with_retry(client, channel: str, timestamp: str, name: str, max_retries: int = 3) -> None:
     """Add a reaction with exponential backoff on rate limiting. Treats already_reacted as success."""
     for attempt in range(max_retries + 1):
@@ -479,8 +515,20 @@ def handle_message(event, say, client):
         listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
         aggregation_keywords = ["集計", "summary", "サマリー"]
         past_keywords = ["過去分処理", "一括処理", "過去分"]
+        reset_keywords = ["スタンプリセット", "スタンプ削除", "リセット"]
 
         channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+
+        if any(kw in text for kw in reset_keywords):
+            if not channel_id:
+                say(f"チャンネル `#{CONTRACT_CHANNEL_NAME}` が見つかりませんでした。")
+                return
+            year, month = parse_year_month(text)
+            period = f"{year}年{month}月" if year and month else "全期間"
+            say(f"{period} のBOT済みスタンプを削除中です。しばらくお待ちください...")
+            result = reset_bot_stamps(client, channel_id, year=year, month=month)
+            say(result)
+            return
 
         if any(kw in text for kw in past_keywords):
             logger.info(f"DM batch command received: {text!r}, channel_id={channel_id}")
