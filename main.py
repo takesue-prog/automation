@@ -466,13 +466,23 @@ def handle_mention(event, say, client):
     listing_keywords = ["未処理", "一覧", "未済", "リスト", "list"]
     aggregation_keywords = ["集計", "summary", "サマリー"]
     past_keywords = ["過去分処理", "一括処理", "過去分"]
+    reset_keywords = ["スタンプリセット", "スタンプ削除", "リセット"]
 
     is_listing = not user_text or any(kw in user_text for kw in listing_keywords)
     is_aggregation = any(kw in user_text for kw in aggregation_keywords)
     is_past = any(kw in user_text for kw in past_keywords)
+    is_reset = any(kw in user_text for kw in reset_keywords)
 
     channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
     is_contract_channel = channel_id and event.get("channel") == channel_id
+
+    if is_reset and is_contract_channel:
+        year, month = parse_year_month(user_text)
+        period = f"{year}年{month}月" if year and month else "全期間"
+        say(f"{period} のBOT済みスタンプを削除中です。しばらくお待ちください...", thread_ts=event.get("ts"))
+        result = reset_bot_stamps(client, channel_id, year=year, month=month)
+        say(result, thread_ts=event.get("ts"))
+        return
 
     if is_past and is_contract_channel:
         year, month = parse_year_month(user_text)
