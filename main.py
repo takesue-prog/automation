@@ -486,14 +486,22 @@ def handle_mention(event, say, client):
     aggregation_keywords = ["集計", "summary", "サマリー"]
     past_keywords = ["過去分処理", "一括処理", "過去分"]
     reset_keywords = ["スタンプリセット", "スタンプ削除", "リセット"]
+    reminder_test_keywords = ["リマインドテスト", "リマインド送信"]
 
     is_listing = not user_text or any(kw in user_text for kw in listing_keywords)
     is_aggregation = any(kw in user_text for kw in aggregation_keywords)
     is_past = any(kw in user_text for kw in past_keywords)
     is_reset = any(kw in user_text for kw in reset_keywords)
+    is_reminder_test = any(kw in user_text for kw in reminder_test_keywords)
 
     channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
     is_contract_channel = channel_id and event.get("channel") == channel_id
+
+    if is_reminder_test and is_contract_channel:
+        say("リマインドをテスト送信します...", thread_ts=event.get("ts"))
+        send_pending_reminder()
+        say("✅ テスト送信完了", thread_ts=event.get("ts"))
+        return
 
     if is_reset and is_contract_channel:
         year, month = parse_year_month(user_text)
