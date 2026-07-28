@@ -426,6 +426,36 @@ def process_past_messages(client, channel_id: str, year: Optional[int] = None, m
     return f"✅ 一括処理完了（{period_label}）：*{processed}件* 処理しました"
 
 
+def send_pending_reminder():
+    channel_id = get_channel_id(app.client, CONTRACT_CHANNEL_NAME)
+    if not channel_id:
+        logger.error("Cannot find contract channel for reminder")
+        return
+    reports = get_pending_review_reports(app.client, channel_id)
+    if not reports:
+        logger.info("No pending reports; skipping reminder")
+        return
+
+    # チャンネルには件数のみ投稿
+    channel_msg = f"<@{REMINDER_USER_ID}> *定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。詳細はDMをご確認ください。"
+    try:
+        app.client.chat_postMessage(channel=channel_id, text=channel_msg)
+        logger.info(f"Reminder posted to #{CONTRACT_CHANNEL_NAME}: {len(reports)} reports")
+    except Exception as e:
+        logger.error(f"Failed to post reminder to channel: {e}")
+
+    # DMに詳細リストを送信
+    try:
+        dm = app.client.conversations_open(users=REMINDER_USER_ID)
+        dm_channel = dm["channel"]["id"]
+        body = format_unprocessed_list(channel_id, reports)
+        dm_header = f"*定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。\n\n"
+        app.client.chat_postMessage(channel=dm_channel, text=dm_header + body)
+        logger.info(f"Reminder detail sent via DM to {REMINDER_USER_ID}")
+    except Exception as e:
+        logger.error(f"Failed to send reminder DM: {e}")
+
+
 def setup_reminder_scheduler():
     if not REMINDER_USER_ID:
         logger.info("REMINDER_USER_ID not set; reminder scheduler not started")
@@ -438,36 +468,6 @@ def setup_reminder_scheduler():
         return None
 
     scheduler = BackgroundScheduler()
-
-    def send_pending_reminder():
-        channel_id = get_channel_id(app.client, CONTRACT_CHANNEL_NAME)
-        if not channel_id:
-            logger.error("Cannot find contract channel for reminder")
-            return
-        reports = get_pending_review_reports(app.client, channel_id)
-        if not reports:
-            logger.info("No pending reports; skipping reminder")
-            return
-
-        # チャンネルには件数のみ投稿
-        channel_msg = f"<@{REMINDER_USER_ID}> *定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。詳細はDMをご確認ください。"
-        try:
-            app.client.chat_postMessage(channel=channel_id, text=channel_msg)
-            logger.info(f"Reminder posted to #{CONTRACT_CHANNEL_NAME}: {len(reports)} reports")
-        except Exception as e:
-            logger.error(f"Failed to post reminder to channel: {e}")
-
-        # DMに詳細リストを送信
-        try:
-            dm = app.client.conversations_open(users=REMINDER_USER_ID)
-            dm_channel = dm["channel"]["id"]
-            body = format_unprocessed_list(channel_id, reports)
-            dm_header = f"*定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。\n\n"
-            app.client.chat_postMessage(channel=dm_channel, text=dm_header + body)
-            logger.info(f"Reminder detail sent via DM to {REMINDER_USER_ID}")
-        except Exception as e:
-            logger.error(f"Failed to send reminder DM: {e}")
-
     scheduler.add_job(send_pending_reminder, "cron", day_of_week="tue", hour=11, minute=0)
     scheduler.add_job(send_pending_reminder, "cron", day_of_week="fri", hour=11, minute=0)
     scheduler.start()
@@ -545,8 +545,15 @@ def handle_message(event, say, client):
         aggregation_keywords = ["集計", "summary", "サマリー"]
         past_keywords = ["過去分処理", "一括処理", "過去分"]
         reset_keywords = ["スタンプリセット", "スタンプ削除", "リセット"]
+        reminder_test_keywords = ["リマインドテスト", "リマインド送信"]
 
         channel_id = get_channel_id(client, CONTRACT_CHANNEL_NAME)
+
+        if any(kw in text for kw in reminder_test_keywords):
+            say("リマインドをテスト送信します...")
+            send_pending_reminder()
+            say("✅ テスト送信完了")
+            return
 
         if any(kw in text for kw in reset_keywords):
             if not channel_id:
