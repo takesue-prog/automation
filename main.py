@@ -448,13 +448,25 @@ def setup_reminder_scheduler():
         if not reports:
             logger.info("No pending reports; skipping reminder")
             return
-        header = f"<@{REMINDER_USER_ID}> *定期リマインド*：BOT処理済みで未確認の契約報告が *{len(reports)}件* あります。確認をお願いします。\n\n"
-        body = format_unprocessed_list(channel_id, reports)
+
+        # チャンネルには件数のみ投稿
+        channel_msg = f"<@{REMINDER_USER_ID}> *定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。詳細はDMをご確認ください。"
         try:
-            app.client.chat_postMessage(channel=channel_id, text=header + body)
+            app.client.chat_postMessage(channel=channel_id, text=channel_msg)
             logger.info(f"Reminder posted to #{CONTRACT_CHANNEL_NAME}: {len(reports)} reports")
         except Exception as e:
-            logger.error(f"Failed to post reminder: {e}")
+            logger.error(f"Failed to post reminder to channel: {e}")
+
+        # DMに詳細リストを送信
+        try:
+            dm = app.client.conversations_open(users=REMINDER_USER_ID)
+            dm_channel = dm["channel"]["id"]
+            body = format_unprocessed_list(channel_id, reports)
+            dm_header = f"*定期リマインド*：未確認の契約報告が *{len(reports)}件* あります。\n\n"
+            app.client.chat_postMessage(channel=dm_channel, text=dm_header + body)
+            logger.info(f"Reminder detail sent via DM to {REMINDER_USER_ID}")
+        except Exception as e:
+            logger.error(f"Failed to send reminder DM: {e}")
 
     scheduler.add_job(send_pending_reminder, "cron", day_of_week="tue", hour=11, minute=0)
     scheduler.add_job(send_pending_reminder, "cron", day_of_week="fri", hour=11, minute=0)
