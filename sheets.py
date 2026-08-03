@@ -23,6 +23,10 @@ SECTION_CANCEL = "解約件数"
 SECTION_CANCEL_INDIVIDUAL = "個人利用"
 SECTION_CANCEL_STORE = "店舗利用"
 
+# Section labels — OEM
+SECTION_OEM_INDIVIDUAL_CANDIDATES = ("OEM個人", "OEM　個人")
+SECTION_OEM_STORE_CANDIDATES = ("OEM店舗", "OEM　店舗")
+
 # Item row labels (in the 科目 column)
 LABEL_PLAN_B_INDIVIDUAL = "個人プラン"
 LABEL_PLAN_B_STORE = "店舗プラン"
@@ -101,6 +105,15 @@ def _section_start(index: Dict, label: str) -> int:
     """Return the first row where label appears, 0 if not found."""
     positions = index.get(label, [])
     return positions[0][0] if positions else 0
+
+
+def _section_start_any(index: Dict, *labels: str) -> int:
+    """Return the first row where any of the labels appears, 0 if not found."""
+    for label in labels:
+        row = _section_start(index, label)
+        if row:
+            return row
+    return 0
 
 
 def _section_start_after(index: Dict, label: str, min_row: int) -> int:
@@ -215,6 +228,11 @@ def _next_line_value(text: str, field: str) -> str:
     return ""
 
 
+def _is_oem(text: str) -> bool:
+    """Return True if the message ID field contains 'チリョーマ' (OEM案件)."""
+    return "チリョーマ" in text
+
+
 def _option_price_change(text: str) -> Optional[int]:
     before_str = _next_line_value(text, "月額（変更前）")
     after_str = _next_line_value(text, "月額（変更後）")
@@ -302,11 +320,18 @@ def update_spreadsheet(
     cancel_store_end = cancel_lmp_start if cancel_lmp_start > cancel_store_start else 9999
     cancel_lmp_end = 9999
 
+    # Locate OEM sections
+    oem_ind_start = _section_start_any(index, *SECTION_OEM_INDIVIDUAL_CANDIDATES)
+    oem_store_start = _section_start_any(index, *SECTION_OEM_STORE_CANDIDATES)
+    oem_ind_end = oem_store_start if oem_store_start > oem_ind_start else 9999
+    oem_store_end = 9999
+
     logger.info(
         f"Sections — B個人:{b_ind_start}-{b_ind_end}, "
         f"B店舗:{b_store_start}-{b_store_end}, LMP:{lmp_start}-{lmp_end}, "
         f"解約件数:{cancel_start}(個人利用:{cancel_ind_start}-{cancel_ind_end}, "
-        f"店舗利用:{cancel_store_start}-{cancel_store_end}, LMP:{cancel_lmp_start}-{cancel_lmp_end})"
+        f"店舗利用:{cancel_store_start}-{cancel_store_end}, LMP:{cancel_lmp_start}-{cancel_lmp_end}), "
+        f"OEM個人:{oem_ind_start}-{oem_ind_end}, OEM店舗:{oem_store_start}-{oem_store_end}"
     )
 
     updated: List[str] = []
@@ -340,13 +365,36 @@ def update_spreadsheet(
     def c_lmp(label: str, delta: int = 1) -> None:
         apply(cancel_lmp_start, cancel_lmp_end, label, delta)
 
+    def oem_ind(label: str, delta: int = 1) -> None:
+        apply(oem_ind_start, oem_ind_end, label, delta)
+
+    def oem_store(label: str, delta: int = 1) -> None:
+        apply(oem_store_start, oem_store_end, label, delta)
+
+    is_oem = _is_oem(text)
     is_b_ind = plan_type == "B個人"
     is_b_store = plan_type == "B店舗"
     is_lmp_ind = plan_type == "LMP個人"
     is_lmp_store = plan_type == "LMP店舗"
 
     if report_type == "契約獲得":
-        if is_b_ind:
+        if is_oem:
+            if is_b_ind or is_lmp_ind:
+                oem_ind(LABEL_PLAN_B_INDIVIDUAL)
+                if not _is_sns_in_contract(text):
+                    fee = _extract_initial_fee(text)
+                    if fee is not None:
+                        oem_ind(LABEL_FEE)
+            elif is_b_store or is_lmp_store:
+                oem_store(LABEL_PLAN_B_STORE)
+                if not _is_sns_in_contract(text):
+                    fee = _extract_initial_fee(text)
+                    if fee is not None:
+                        fee_label = LABEL_FEE_HALF if fee < 9800 else LABEL_FEE
+                        oem_store(fee_label)
+            else:
+                logger.warning("OEM案件だがプラン種別を特定できませんでした")
+        elif is_b_ind:
             b_ind(LABEL_PLAN_B_INDIVIDUAL)
             if not _is_sns_in_contract(text):
                 fee = _extract_initial_fee(text)
@@ -373,7 +421,14 @@ def update_spreadsheet(
             lmp(LABEL_PLAN_LMP_STORE)
 
     elif report_type == "解約":
-        if is_b_ind:
+        if is_oem:
+            if is_b_ind or is_lmp_ind:
+                oem_ind(LABEL_PLAN_B_INDIVIDUAL)
+            elif is_b_store or is_lmp_store:
+                oem_store(LABEL_PLAN_B_STORE)
+            else:
+                logger.warning("OEM案件だがプラン種別を特定できませんでした")
+        elif is_b_ind:
             c_ind(LABEL_PLAN_B_INDIVIDUAL)
             for opt in _extract_options(text):
                 lbl = OPTION_SHEET_LABELS.get(opt)
@@ -391,7 +446,21 @@ def update_spreadsheet(
             c_lmp(LABEL_PLAN_LMP_STORE)
 
     elif report_type == "課金前解約":
-        if is_b_ind:
+        if is_oem:
+            if is_b_ind or is_lmp_ind:
+                oem_ind(LABEL_PLAN_B_INDIVIDUAL, delta=-1)
+                fee = _extract_initial_fee(text)
+                if fee and fee > 0:
+                    oem_ind(LABEL_FEE, delta=-1)
+            elif is_b_store or is_lmp_store:
+                oem_store(LABEL_PLAN_B_STORE, delta=-1)
+                fee = _extract_initial_fee(text)
+                if fee and fee > 0:
+                    fee_label = LABEL_FEE_HALF if fee < 9800 else LABEL_FEE
+                    oem_store(fee_label, delta=-1)
+            else:
+                logger.warning("OEM案件だがプラン種別を特定できませんでした")
+        elif is_b_ind:
             b_ind(LABEL_PLAN_B_INDIVIDUAL, delta=-1)
             fee = _extract_initial_fee(text)
             if fee and fee > 0:
