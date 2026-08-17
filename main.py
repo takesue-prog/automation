@@ -37,7 +37,7 @@ IGNORE_REACTION = os.getenv("IGNORE_REACTION", "無視")
 UNPROCESSED_SEARCH_DAYS = int(os.getenv("UNPROCESSED_SEARCH_DAYS", "60"))
 
 # 自動処理対象の報告種別
-AUTO_PROCESS_TYPES = frozenset({"契約獲得", "オプション追加", "オプション解約", "解約", "課金前解約"})
+AUTO_PROCESS_TYPES = frozenset({"契約獲得", "オプション追加", "オプション解約", "解約", "課金前解約", "SNSシェア"})
 BOT_REACTION = os.getenv("BOT_REACTION", "bot_済み")
 REMINDER_USER_ID = os.getenv("REMINDER_USER_ID", "")
 REMINDER_INTERVAL_DAYS = int(os.getenv("REMINDER_INTERVAL_DAYS", "3"))
